@@ -2,6 +2,7 @@ import { getModel } from "../db.js";
 import { registerCommand } from "../registrar.js";
 import { getMembers, removeMember, setMember } from "../character/group.js";
 import { releaseCharacterWebhook } from "../character/webhooks.js";
+import { defaultChannelModel, resetDefaultChannelModel } from "../ollama/defaultmodel.js";
 
 const { PREFIX } = process.env;
 
@@ -39,6 +40,9 @@ async function cmdLeave({ arg1: idName }) {
 	if (!idName) return `missing name: ${PREFIX}leave <name>`;
 
 	if (!removeMember(idName.toLowerCase())) return `"${idName}" is not in the chat`;
+
+	// The default character answers whenever nobody is in the chat, so leaving has to end that too
+	if (defaultChannelModel?.toLowerCase() === idName.toLowerCase()) resetDefaultChannelModel();
 
 	const modelData = await getModel(idName);
 	if (!modelData) return `${idName} left the chat`;

@@ -3,8 +3,12 @@ import { defaultChannelModel } from '../ollama/defaultmodel.js';
 import { existsJson, loadJson, saveJson } from '../utils/json.js';
 
 const MEMBERS_FILE = 'groupMembers';
+const NOTES_FILE = 'groupNotes';
 
 let members = existsJson(MEMBERS_FILE) ? loadJson(MEMBERS_FILE) : [];
+
+// Notes of characters who left, so a plain !join brings them back as they were
+const savedNotes = existsJson(NOTES_FILE) ? loadJson(NOTES_FILE) : {};
 
 export function getMembers() {
 	return members;
@@ -19,16 +23,22 @@ export function setMember(idName, note) {
 	if (existing) {
 		if (note) existing.note = note;
 	} else {
-		members.push({ idname: idName, note: note ?? '' });
+		members.push({ idname: idName, note: note ?? savedNotes[idName] ?? '' });
 	}
 	save();
 }
 
 export function removeMember(idName) {
-	const before = members.length;
-	members = members.filter(member => member.idname !== idName);
+	const leaving = members.find(member => member.idname === idName);
+	if (!leaving) return false;
+
+	if (leaving.note) {
+		savedNotes[idName] = leaving.note;
+		saveJson(NOTES_FILE, savedNotes);
+	}
+	members = members.filter(member => member !== leaving);
 	save();
-	return members.length !== before;
+	return true;
 }
 
 export function isMember(idName) {

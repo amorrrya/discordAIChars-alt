@@ -85,7 +85,9 @@ function fitList(title, items, toLine, timeOf, budget, used) {
 
 // Quirks that pile up turn a character into a parody of themselves, so the ones used too often lately get named
 function overusedHabits(ownMessages) {
-	const texts = ownMessages.slice(-6).map(row => row.text.trim()).filter(Boolean);
+	// Counted per reply, so a burst of many short messages counts once
+	const replies = groupReplies(ownMessages).map(parts => parts.map(row => row.text.trim()).filter(Boolean)).filter(parts => parts.length > 0);
+	const texts = replies.slice(-6).map(parts => parts.join('\n'));
 	if (texts.length < 3) return [];
 
 	const counts = new Map();
@@ -104,14 +106,28 @@ function overusedHabits(ownMessages) {
 		if (text.includes('...') && !short) count('dots', '"..."');
 		if (/(^|[^\p{L}])(\p{L})-\2/iu.test(text)) count('stammer', 'stammering like "T-thanks"');
 		if (text.endsWith('?')) count('question', 'ending with a question');
-		if (text.length > 200) count('long', 'long messages');
+		if (text.split('\n').some(part => part.length > 200)) count('long', 'long messages');
+		if (text.split('\n').length >= 3) count('burst', 'sending three or more messages in a row');
 	}
 
 	const limit = Math.max(2, Math.ceil(texts.length / 2));
-	return [...counts.values()]
+	const habits = [...counts.values()]
 		.filter(entry => entry.n >= limit)
 		.map(entry => ({ key: entry.key, label: `${entry.label} (${entry.n} of the last ${texts.length})` }));
+
+	// A word the character keeps coming back to, the sign of one joke on repeat
+	const longer = replies.slice(-8).map(parts => parts.join(' ').toLowerCase());
+	const vocabulary = new Map();
+	for (const text of longer) {
+		for (const word of new Set(text.match(/\p{L}{6,}/gu) ?? [])) vocabulary.set(word, (vocabulary.get(word) ?? 0) + 1);
+	}
+	for (const [word, n] of vocabulary) {
+		if (n >= 3 && !commonWords.has(word)) habits.push({ key: `word:${word}`, label: `the word "${word}" (${n} of the last ${longer.length})` });
+	}
+	return habits;
 }
+
+const commonWords = new Set(['really', 'something', 'because', 'thought', 'people', 'always', 'though', 'little', 'should', 'pretty', 'things', 'anyone', 'everyone', 'nothing', 'someone', 'before', 'already', 'another', 'around', 'better', 'please']);
 
 const interjections = new Set(['um', 'uh', 'erm', 'oh', 'ah', 'well', 'hmm']);
 
@@ -134,8 +150,8 @@ function tameHabits(text, habits) {
 	return /^\p{Lu}/u.test(text.trim()) ? result.charAt(0).toUpperCase() + result.slice(1) : result;
 }
 
-function styleCheck(ownMessages) {
-	// Parts of one reply follow each other directly and within seconds
+// Parts of one reply follow each other directly and within seconds
+function groupReplies(ownMessages) {
 	const replies = [];
 	for (const row of ownMessages) {
 		const last = replies[replies.length - 1];
@@ -143,8 +159,11 @@ function styleCheck(ownMessages) {
 		if (previous && row.id === previous.id + 1 && row.time - previous.time < 20000) last.push(row);
 		else replies.push([row]);
 	}
+	return replies;
+}
 
-	const recent = replies.slice(-5);
+function styleCheck(ownMessages) {
+	const recent = groupReplies(ownMessages).slice(-5);
 	if (recent.length < 3) return null;
 
 	return recent
@@ -258,6 +277,23 @@ function words(text) {
 function similar(a, b) {
 	const shared = [...a].filter(word => b.has(word)).length;
 	return shared / new Set([...a, ...b]).size >= 0.7;
+}
+
+// In a burst, a short filler like "LOL" or "Anyway" that was already sent recently is left out
+function dropUsedFillers(parts, ownRecent) {
+	if (parts.length < 3) return parts;
+
+	const normal = text => text.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, '').trim();
+	const isShort = text => text.split(/\s+/).length <= 3;
+	const used = new Set(ownRecent.map(row => normal(row.text)).filter(text => text && isShort(text)));
+	const kept = parts.filter(part => {
+		const text = normal(part);
+		if (!text || !isShort(text)) return true;
+		if (used.has(text)) return false;
+		used.add(text);
+		return true;
+	});
+	return kept.length > 0 ? kept : parts.slice(0, 1);
 }
 
 function dropRepeats(message, ownRecent) {
@@ -375,8 +411,9 @@ export async function speak(member, members, { reason, loopMode, question = fals
 		}
 
 		const own = await recentMessagesOf(character, 20);
+		const habits = current.local ? overusedHabits(own) : [];
 		const cleaned = cleanMessage(result.message ?? '', name);
-		const written = current.local ? tameHabits(cleaned, overusedHabits(own)) : cleaned;
+		const written = current.local ? tameHabits(cleaned, habits) : cleaned;
 		if (written !== cleaned) console.log(`${color.Gray}${name}'s overused quirks were taken out of: ${cleaned}`);
 		const voice = current.local ? (await voiceSamples(character)).map(text => ({ text })) : [];
 		const message = dropRepeats(written, [...own.slice(-8), ...voice]).trim();
@@ -393,7 +430,10 @@ export async function speak(member, members, { reason, loopMode, question = fals
 			.filter(row => !current.local || (!row.is_bot && !row.character && row.id > newest.id - 15));
 
 		let typedFrom = typingFrom;
-		for (const [index, part] of splitIntoMessages(message, current.local).entries()) {
+		const split = dropUsedFillers(splitIntoMessages(message, current.local), own.slice(-15));
+		// After a run of bursts the next reply stays short, even when the model wrote another burst
+		const parts = habits.some(habit => habit.key === 'burst') ? split.slice(0, 2) : split;
+		for (const [index, part] of parts.entries()) {
 			if (index > 0 && account) account.channel.sendTyping().catch(() => {});
 			const wait = typedFrom + typingTime(part) - Date.now();
 			if (wait > 0) await sleep(wait);

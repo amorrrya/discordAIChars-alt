@@ -215,7 +215,7 @@ async function converse() {
 	// Pick up .env edits, like a new API key, without a restart
 	dotenv.config({ override: true, quiet: true });
 
-	const members = await loadMembers();
+	let members = await loadMembers();
 	if (members.length === 0) return;
 	if (!engine()) {
 		console.log(`${color.Red}No model to answer with: set ANTHROPIC_API_KEY, or a local model as BASE_MODEL or LOCAL_MODEL`);
@@ -254,6 +254,10 @@ async function converse() {
 	let chain = 0;
 	let silentInARow = 0;
 	while (!closing) {
+		// !join and !leave take effect between turns, also while loop mode keeps this running
+		members = await loadMembers();
+		if (members.length === 0) break;
+
 		if (loopMode && Date.now() - lastPersonAt > loopIdleLimit) {
 			loopMode = false;
 			console.log(`${color.Gray}Loop mode off, nobody has written for 30 minutes`);
