@@ -58,9 +58,14 @@ export async function updateWebhookIfNecessary(avatar, displayName) {
 }
 
 export async function getOrCreateWebhook() {
-	if (existsJson(webhookFileName)) {
-		loadWebhook();
-	} else {
-		createWebhook();
+	try {
+		if (existsJson(webhookFileName)) {
+			await loadWebhook();
+		} else {
+			await createWebhook();
+		}
+	} catch (err) {
+		// Only !chain uses this webhook, the characters have their own
+		console.log(`${color.Red}Could not set up the shared webhook (${err.message}), !chain is off until a webhook slot in the channel is free`);
 	}
 }

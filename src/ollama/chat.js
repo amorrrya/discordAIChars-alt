@@ -139,6 +139,11 @@ export async function talkToModel(userInput, message, modelName = defaultChannel
 		return;
 	}
 
+	if (!webhook) {
+		await channel.send('### !chain is off: the channel has no free webhook slot');
+		return;
+	}
+
 	const { profile, displayname, model, idname } = modelData;
 
 	const lowerIdName = idname.toLowerCase();

@@ -89,22 +89,49 @@ function overusedHabits(ownMessages) {
 	if (texts.length < 3) return [];
 
 	const counts = new Map();
-	const count = label => counts.set(label, (counts.get(label) ?? 0) + 1);
+	const count = (key, label) => {
+		const entry = counts.get(key) ?? { key, label, n: 0 };
+		entry.n++;
+		counts.set(key, entry);
+	};
 	for (const text of texts) {
 		// A terse character's "..." or a short answer is their voice, not a tic
 		const short = text.split(/\s+/).length <= 3;
 		const opener = text.split(/\s+/)[0].toLowerCase().replace(/[^\p{L}\p{N}'-]/gu, '');
-		if (opener && !short) count(`starting with "${opener}"`);
-		for (const laugh of new Set(text.toLowerCase().match(/\b(?:f?a?ha(?:ha)+|he(?:he)+|lol|lmao)\b/g) ?? [])) count(`"${laugh}"`);
-		if (text.includes('!!')) count('"!!"');
-		if (text.includes('...') && !short) count('"..."');
-		if (/(^|[^\p{L}])(\p{L})-\2/iu.test(text)) count('stammering like "T-thanks"');
-		if (text.endsWith('?')) count('ending with a question');
-		if (text.length > 200) count('long messages');
+		if (opener && !short) count(`opener:${opener}`, `starting with "${opener}"`);
+		for (const laugh of new Set(text.toLowerCase().match(/\b(?:f?a?ha(?:ha)+|he(?:he)+|lol|lmao)\b/g) ?? [])) count(`laugh:${laugh}`, `"${laugh}"`);
+		if (text.includes('!!')) count('bangs', '"!!"');
+		if (text.includes('...') && !short) count('dots', '"..."');
+		if (/(^|[^\p{L}])(\p{L})-\2/iu.test(text)) count('stammer', 'stammering like "T-thanks"');
+		if (text.endsWith('?')) count('question', 'ending with a question');
+		if (text.length > 200) count('long', 'long messages');
 	}
 
 	const limit = Math.max(2, Math.ceil(texts.length / 2));
-	return [...counts].filter(([, n]) => n >= limit).map(([label, n]) => `${label} (${n} of the last ${texts.length})`);
+	return [...counts.values()]
+		.filter(entry => entry.n >= limit)
+		.map(entry => ({ key: entry.key, label: `${entry.label} (${entry.n} of the last ${texts.length})` }));
+}
+
+const interjections = new Set(['um', 'uh', 'erm', 'oh', 'ah', 'well', 'hmm']);
+
+// A local model often writes an overused quirk anyway after being told not to, so it is taken out before sending
+function tameHabits(text, habits) {
+	let result = text;
+	for (const { key } of habits) {
+		if (key.startsWith('laugh:')) {
+			result = result.replace(new RegExp(`\\s*\\b${escapeRegExp(key.slice(6))}\\b[.!?~]*`, 'gi'), '');
+		} else if (key === 'bangs') {
+			result = result.replace(/!{2,}/g, '!');
+		} else if (key === 'stammer') {
+			result = result.replace(/(^|[^\p{L}])(\p{L})-(?=(\p{L}))/gu, (match, before, first, next) => (first.toLowerCase() === next.toLowerCase() ? before : match));
+		} else if (key.startsWith('opener:') && interjections.has(key.slice(7))) {
+			result = result.replace(new RegExp(`^\\s*${escapeRegExp(key.slice(7))}\\b[\\s.,!]*`, 'i'), '');
+		}
+	}
+	result = result.trim();
+	// Keep a capital at the start when the original had one, terse lowercase characters stay lowercase
+	return /^\p{Lu}/u.test(text.trim()) ? result.charAt(0).toUpperCase() + result.slice(1) : result;
 }
 
 function styleCheck(ownMessages) {
@@ -165,7 +192,7 @@ async function privateNote(modelData, members, { reason, loopMode, shownEpisodes
 	const style = styleCheck(own);
 	if (style) end.push('', `${name}'s last few replies were: ${style}. If they've fallen into a pattern, break it.`);
 	const habits = local ? overusedHabits(own) : [];
-	if (habits.length > 0) end.push(`Habits ${name} has been overusing: ${habits.join(', ')}. Leave all of them out this time.`);
+	if (habits.length > 0) end.push(`Habits ${name} has been overusing: ${habits.map(habit => habit.label).join(', ')}. Leave all of them out this time.`);
 
 	end.push('', `Why it's ${name}'s turn: ${reason}`);
 	if (loopMode) end.push('Loop mode is on: the people want the characters to keep chatting on their own, so carry the conversation forward.');
@@ -347,9 +374,12 @@ export async function speak(member, members, { reason, loopMode, question = fals
 			console.log(`${color.Gray}${name} remembers: ${remember.map(item => item.text).join(' | ')}`);
 		}
 
-		const written = cleanMessage(result.message ?? '', name);
+		const own = await recentMessagesOf(character, 20);
+		const cleaned = cleanMessage(result.message ?? '', name);
+		const written = current.local ? tameHabits(cleaned, overusedHabits(own)) : cleaned;
+		if (written !== cleaned) console.log(`${color.Gray}${name}'s overused quirks were taken out of: ${cleaned}`);
 		const voice = current.local ? (await voiceSamples(character)).map(text => ({ text })) : [];
-		const message = dropRepeats(written, [...(await recentMessagesOf(character, 8)), ...voice]).trim();
+		const message = dropRepeats(written, [...own.slice(-8), ...voice]).trim();
 		if (message !== written) console.log(`${color.Gray}${name} repeated an earlier message, the repeated part wasn't sent: ${written}`);
 		if (!message) {
 			console.log(`${color.Gray}${name} stayed quiet`);

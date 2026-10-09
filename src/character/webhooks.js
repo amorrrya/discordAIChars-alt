@@ -42,6 +42,17 @@ async function spareWebhook(all) {
 	return own.find(existing => !characters.has(existing.name)) ?? own.find(existing => !chatting.has(characters.get(existing.name))) ?? null;
 }
 
+// A character leaving the chat gives their webhook slot back to the channel, it is made again if they return
+export async function releaseCharacterWebhook({ idname, displayname }) {
+	webhooks.delete(idname.toLowerCase());
+	const own = ownWebhooks(await channel.fetchWebhooks()).filter(existing => existing.name === displayname);
+	for (const webhook of own) {
+		await webhook.delete();
+		ownWebhookIds.delete(webhook.id);
+	}
+	return own.length;
+}
+
 export async function getCharacterWebhook({ idname, displayname, profile }) {
 	const key = idname.toLowerCase();
 	const version = avatarVersion(profile);

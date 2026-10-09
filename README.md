@@ -75,7 +75,7 @@ Every reply sees the rules, the character sheets with real past messages of each
 - Keep sheets around 300 to 600 words, local models with a small context have less room for the chat.
 - A character who sends many short messages in a row says so in their sheet. Everyone else mostly sends one message.
 - The `!join` note decides how often they speak, e.g. "barely talks, answers direct questions with a few words".
-- Every character posts through its own webhook, and Discord allows 15 per channel. When a channel is full, the bot reuses its own webhooks that no character in the chat needs, otherwise delete unused ones in the channel settings.
+- Every character posts through its own webhook, and Discord allows 15 per channel. `!leave` gives a character's slot back. When a channel is full, the bot reuses its own webhooks that no character in the chat needs, otherwise delete unused ones in the channel settings.
 
 ## Commands
 
