@@ -4,7 +4,7 @@ import { addEpisode, getSummarizedUntil, recentEpisodes } from '../memory/episod
 import { getWindowStart, latestMessage, messageBefore, messagesBetween, setWindowStart, windowMessages } from '../memory/messages.js';
 import { loadLorebook } from '../lore/lorebook.js';
 import { askClaude } from '../claude/request.js';
-import { askLocal, localContext, localThinking, thinkingTokens } from '../ollama/local.js';
+import { askLocal, localContext, thinkingMode, thinkingTokens } from '../ollama/local.js';
 import { color } from '../utils/consolecolors.js';
 import { engine } from './engine.js';
 import { coreRules, episodeRules, localRules } from './prompts.js';
@@ -62,10 +62,16 @@ function markCachePoints(content) {
 	if (last >= 2) content[last - 1].cache_control = cache;
 }
 
+// Summaries of what lies before the window; the other mode may have summarized messages this one still reads in full
+async function storySoFar() {
+	const windowStart = await getWindowStart();
+	return (await recentEpisodes(episodesInContext)).filter(episode => episode.last_id < windowStart);
+}
+
 export async function transcriptContent() {
 	const rows = await windowMessages();
 	const before = rows.length > 0 ? await messageBefore(rows[0].id) : null;
-	const episodes = await recentEpisodes(episodesInContext);
+	const episodes = await storySoFar();
 
 	const content = [{ type: 'text', text: chatInfo(episodes) }];
 	const chunks = chunkTranscript(rows, before?.time ?? null);
@@ -125,7 +131,7 @@ function localCast(members, full, samples) {
 
 // Fixed per cast and lorebook, so every request starts the same and the model can reuse what it already read
 function localLayout(members, samples) {
-	const usable = localContext() - (localThinking() ? thinkingTokens : 2048) - 512;
+	const usable = localContext() - (thinkingMode() === 'never' ? 2048 : thinkingTokens) - 512;
 	const lore = loadLorebook();
 
 	const rules = estimateTokens(localRules);
@@ -162,7 +168,7 @@ function localSystem(members, layout, samples) {
 async function episodesWithin(budget) {
 	const kept = [];
 	let used = 0;
-	for (const episode of (await recentEpisodes(episodesInContext)).reverse()) {
+	for (const episode of (await storySoFar()).reverse()) {
 		used += estimateTokens(episode.summary) + 20;
 		if (used > budget) break;
 		kept.unshift(episode);

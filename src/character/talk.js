@@ -10,7 +10,7 @@ import { detectImageType } from '../utils/imagetype.js';
 import { color } from '../utils/consolecolors.js';
 import { syncLoreChunks } from '../lore/chunks.js';
 import { maintainWindow } from './context.js';
-import { chooseSpeaker } from './director.js';
+import { asksQuestion, chooseSpeaker } from './director.js';
 import { engine } from './engine.js';
 import { loadMembers, upgradeMembers } from './group.js';
 import { speak } from './speaker.js';
@@ -268,13 +268,15 @@ async function converse() {
 		const forcedModel = forced.shift();
 		if (forcedModel) {
 			const member = members.find(({ modelData }) => idOf(modelData) === idOf(forcedModel)) ?? { modelData: forcedModel, note: '' };
-			turn = { member, reason: 'someone asked them directly with !ask' };
+			const newest = await latestMessage();
+			const question = Boolean(newest && !newest.character && asksQuestion(newest.text, member.modelData));
+			turn = { member, reason: 'someone asked them directly with !ask', question };
 		} else {
 			turn = await chooseSpeaker(members, { loopMode, chain });
 		}
 		if (!turn) break;
 
-		const sent = await speak(turn.member, members, { reason: turn.reason, loopMode });
+		const sent = await speak(turn.member, members, { reason: turn.reason, loopMode, question: turn.question });
 		if (sent) {
 			chain++;
 			silentInARow = 0;

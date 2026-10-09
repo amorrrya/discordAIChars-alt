@@ -26,7 +26,7 @@ node setup
 
 Or `setup.bat` on Windows. It checks your RAM and graphics card, recommends a model, downloads it after asking and saves it in `.env`.
 
-Claude instead: set `ANTHROPIC_API_KEY` and `BASE_MODEL=claude-opus-5-5`, then `ollama pull qwen3-embedding:4b` and set `EMBED_MODEL=qwen3-embedding:4b` for the memory search. A local model in `LOCAL_MODEL` answers while the key is empty.
+Claude instead: set `ANTHROPIC_API_KEY` and `BASE_MODEL=claude-opus-5-5`, then `ollama pull qwen3-embedding:4b` and set `EMBED_MODEL=qwen3-embedding:4b` for the memory search. A local model in `LOCAL_MODEL` answers while the key is empty, or always when started with `start-local.bat`. Both modes share one memory.
 
 Start the bot with `node main`, or `start.bat` on Windows. Ctrl+C stops it after the current reply and saves everything.
 
@@ -52,7 +52,7 @@ Measured on an RTX 4080 SUPER with a Ryzen 9 7900X, per reply once the chat is l
 - gemma4:12b-it-qat: 4 to 8 seconds
 - gemma4:e4b on the processor only: 15 to 30 seconds
 
-`LOCAL_THINK=true` lets the characters think before every reply: smarter replies, about four times slower. The director always decides without thinking. `LOCAL_CONTEXT` sets how many tokens the model reads at once. More context remembers more of the chat and needs more memory.
+`LOCAL_THINK=questions` lets a character think before answering a direct question, `true` before every reply: smarter replies, about four times slower. The director always decides without thinking. `LOCAL_CONTEXT` sets how many tokens the model reads at once. More context remembers more of the chat and needs more memory. `LOCAL_PICTURES=false` turns picture descriptions off in local mode.
 
 Every reply sees the rules, the character sheets with real past messages of each character as voice examples, the chat, everything the lore says about the character who is speaking, and a private note with the memories and other lore that matter right now. The character writes a short plan before the message. Smaller models are less consistent and know less about the world. gemma4:e2b works, but its characters lose the thread quickly.
 
@@ -73,7 +73,9 @@ Every reply sees the rules, the character sheets with real past messages of each
 - World knowledge goes in the lorebook, not the sheet. Note secrets and who knows what.
 - Give every character a lore section with their name in the heading. Local models read all of it whenever that character speaks.
 - Keep sheets around 300 to 600 words, local models with a small context have less room for the chat.
+- A character who sends many short messages in a row says so in their sheet. Everyone else mostly sends one message.
 - The `!join` note decides how often they speak, e.g. "barely talks, answers direct questions with a few words".
+- Every character posts through its own webhook, and Discord allows 15 per channel. When a channel is full, the bot reuses its own webhooks that no character in the chat needs, otherwise delete unused ones in the channel settings.
 
 ## Commands
 

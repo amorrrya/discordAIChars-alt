@@ -7,8 +7,10 @@ export function localContext() {
 	return Number(process.env.LOCAL_CONTEXT) || 32768;
 }
 
-export function localThinking() {
-	return process.env.LOCAL_THINK === 'true';
+// LOCAL_THINK: true thinks before every reply, questions only before answering a direct question
+export function thinkingMode() {
+	const value = process.env.LOCAL_THINK;
+	return value === 'true' ? 'always' : value === 'questions' ? 'questions' : 'never';
 }
 
 function parseJson(text) {
@@ -24,7 +26,7 @@ function parseJson(text) {
 
 export const thinkingTokens = 8192;
 
-export async function askLocal({ label, model, system, prompt, schema = null, images = undefined, temperature = settings.temperature, think = localThinking() }) {
+export async function askLocal({ label, model, system, prompt, schema = null, images = undefined, temperature = settings.temperature, think = thinkingMode() === 'always' }) {
 	const response = await ollama.chat({
 		model,
 		stream: false,

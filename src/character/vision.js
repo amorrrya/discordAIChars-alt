@@ -12,6 +12,7 @@ export async function describePictures(paths, context) {
 	const current = engine();
 	const chosen = process.env.PICTURE_MODEL;
 	if (paths.length === 0 || !current || chosen === 'none') return null;
+	if (current.local && process.env.LOCAL_PICTURES === 'false') return null;
 
 	try {
 		const pictureModel = chosen || current.model;

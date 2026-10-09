@@ -27,4 +27,4 @@ async function cmdDelete({ arg1: idName, authorId }) {
 	return `${displayname} deleted`
 }
 
-registerCommand('delete', cmdDelete, 'Manage', 'deletes a character you own', '<name>', '$!delete jamal');
+registerCommand('delete', cmdDelete, 'Manage', 'deletes a character you own', '<name>', '$!delete tomas');

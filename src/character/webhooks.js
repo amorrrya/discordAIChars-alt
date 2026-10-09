@@ -3,6 +3,8 @@ import fs from 'fs';
 import { client } from '../client.js';
 import { channel } from '../channel.js';
 import { webhook as sharedWebhook } from '../webhook.js';
+import { getAllModels } from '../db.js';
+import { getMembers } from './group.js';
 
 // One webhook per character, so names and avatars never have to be swapped back and forth
 const webhooks = new Map();
@@ -28,6 +30,18 @@ function avatarVersion(profile) {
 	return `${profile}:${fs.statSync(profile).mtimeMs}`;
 }
 
+function ownWebhooks(all) {
+	return [...all.values()].filter(existing => existing.owner?.id === client.user.id && existing.id !== sharedWebhook?.id);
+}
+
+// Discord allows 15 webhooks per channel. When it's full, one of this bot's webhooks that no character in the chat needs gets renamed.
+async function spareWebhook(all) {
+	const characters = new Map((await getAllModels()).map(model => [model.displayname, model.idname.toLowerCase()]));
+	const chatting = new Set(getMembers().map(member => member.idname));
+	const own = ownWebhooks(all);
+	return own.find(existing => !characters.has(existing.name)) ?? own.find(existing => !chatting.has(characters.get(existing.name))) ?? null;
+}
+
 export async function getCharacterWebhook({ idname, displayname, profile }) {
 	const key = idname.toLowerCase();
 	const version = avatarVersion(profile);
@@ -36,17 +50,24 @@ export async function getCharacterWebhook({ idname, displayname, profile }) {
 	if (cached && cached.name === displayname && cached.version === version) return cached.webhook;
 
 	const avatar = version ? profile : null;
-	let webhook = cached?.webhook ?? (await channel.fetchWebhooks()).find(existing =>
-		existing.owner?.id === client.user.id &&
-		existing.name === displayname &&
-		existing.id !== sharedWebhook?.id
-	);
+	const all = cached ? null : await channel.fetchWebhooks();
+	let webhook = cached?.webhook ?? ownWebhooks(all).find(existing => existing.name === displayname);
 
-	if (webhook) {
-		webhook = await webhook.edit({ name: displayname, avatar });
-	} else {
-		webhook = await channel.createWebhook({ name: displayname, avatar });
+	let created = false;
+	if (!webhook) {
+		try {
+			webhook = await channel.createWebhook({ name: displayname, avatar });
+			created = true;
+		} catch (err) {
+			if (err.code !== 30007) throw err;
+			webhook = await spareWebhook(all);
+			if (!webhook) {
+				throw new Error(`this channel has Discord's limit of 15 webhooks, so ${displayname} can't post: delete unused ones in the channel settings under Integrations, Webhooks`);
+			}
+			for (const [other, entry] of webhooks) if (entry.webhook.id === webhook.id) webhooks.delete(other);
+		}
 	}
+	if (!created) webhook = await webhook.edit({ name: displayname, avatar });
 
 	webhooks.set(key, { webhook, name: displayname, version });
 	ownWebhookIds.add(webhook.id);

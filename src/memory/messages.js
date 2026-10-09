@@ -1,5 +1,6 @@
 import { all, get, getMeta, run, setMeta } from './db.js';
 import { embedPending, forget, forgetAll } from './embed.js';
+import { engine } from '../character/engine.js';
 
 const columns = 'id, discord_id, time, speaker, author_id, character, is_bot, text, reply, pictures';
 
@@ -12,13 +13,18 @@ export async function addMessage({ discordId = null, time = Date.now(), speaker,
 	return lastID;
 }
 
-// Messages from this id on are sent in full every time, older ones live on as episodes and search results
+// Messages from this id on are sent in full every time, older ones live on as episodes and search results.
+// A local model reads far less, so it keeps its own start and never shrinks what the API reads from the same memory.
+function windowKey() {
+	return engine()?.local ? 'window_start_local' : 'window_start';
+}
+
 export async function getWindowStart() {
-	return Number((await getMeta('window_start')) ?? 0);
+	return Number((await getMeta(windowKey())) ?? 0);
 }
 
 export async function setWindowStart(id) {
-	await setMeta('window_start', id);
+	await setMeta(windowKey(), id);
 }
 
 export async function windowMessages() {
@@ -74,6 +80,6 @@ export async function clearChatMemory() {
 	for (const table of ['messages', 'episodes', 'memories', 'states']) {
 		await run(`DELETE FROM ${table}`);
 	}
-	await run("DELETE FROM meta WHERE key IN ('window_start', 'summarized_until')");
+	await run("DELETE FROM meta WHERE key IN ('window_start', 'window_start_local', 'summarized_until')");
 	forgetAll();
 }

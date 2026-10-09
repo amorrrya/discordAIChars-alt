@@ -1,5 +1,5 @@
 import { askClaude } from '../claude/request.js';
-import { askLocal, localThinking } from '../ollama/local.js';
+import { askLocal, thinkingMode } from '../ollama/local.js';
 import { all } from '../memory/db.js';
 import { embed, search } from '../memory/embed.js';
 import { episodesByIds } from '../memory/episodes.js';
@@ -15,7 +15,7 @@ import { estimateTokens, formatClock, formatDay, formatShortDay, partOfDay, rend
 import { getCharacterWebhook } from './webhooks.js';
 import { ensureAccount, showActivity, startTyping } from './accounts.js';
 
-const maxParts = 5;
+const maxParts = 10;
 const recentMemoryCount = 12;
 const relevantMemoryCount = 8;
 const relevantMessageCount = 8;
@@ -83,6 +83,30 @@ function fitList(title, items, toLine, timeOf, budget, used) {
 	return ['', title, ...kept.sort((a, b) => timeOf(a) - timeOf(b)).map(toLine)];
 }
 
+// Quirks that pile up turn a character into a parody of themselves, so the ones used too often lately get named
+function overusedHabits(ownMessages) {
+	const texts = ownMessages.slice(-6).map(row => row.text.trim()).filter(Boolean);
+	if (texts.length < 3) return [];
+
+	const counts = new Map();
+	const count = label => counts.set(label, (counts.get(label) ?? 0) + 1);
+	for (const text of texts) {
+		// A terse character's "..." or a short answer is their voice, not a tic
+		const short = text.split(/\s+/).length <= 3;
+		const opener = text.split(/\s+/)[0].toLowerCase().replace(/[^\p{L}\p{N}'-]/gu, '');
+		if (opener && !short) count(`starting with "${opener}"`);
+		for (const laugh of new Set(text.toLowerCase().match(/\b(?:f?a?ha(?:ha)+|he(?:he)+|lol|lmao)\b/g) ?? [])) count(`"${laugh}"`);
+		if (text.includes('!!')) count('"!!"');
+		if (text.includes('...') && !short) count('"..."');
+		if (/(^|[^\p{L}])(\p{L})-\2/iu.test(text)) count('stammering like "T-thanks"');
+		if (text.endsWith('?')) count('ending with a question');
+		if (text.length > 200) count('long messages');
+	}
+
+	const limit = Math.max(2, Math.ceil(texts.length / 2));
+	return [...counts].filter(([, n]) => n >= limit).map(([label, n]) => `${label} (${n} of the last ${texts.length})`);
+}
+
 function styleCheck(ownMessages) {
 	// Parts of one reply follow each other directly and within seconds
 	const replies = [];
@@ -105,7 +129,7 @@ function styleCheck(ownMessages) {
 		.join('; ');
 }
 
-async function privateNote(modelData, members, { reason, loopMode, shownEpisodes, budget = Infinity }) {
+async function privateNote(modelData, members, { reason, loopMode, shownEpisodes, budget = Infinity, local = false }) {
 	const name = modelData.displayname;
 	const character = idOf(modelData);
 	const now = Date.now();
@@ -137,8 +161,11 @@ async function privateNote(modelData, members, { reason, loopMode, shownEpisodes
 	if (activePeople.length > 0) lines.push(`People who wrote in the last two hours: ${activePeople.join(', ')}.`);
 
 	const end = [];
-	const style = styleCheck(await recentMessagesOf(character, 20));
+	const own = await recentMessagesOf(character, 20);
+	const style = styleCheck(own);
 	if (style) end.push('', `${name}'s last few replies were: ${style}. If they've fallen into a pattern, break it.`);
+	const habits = local ? overusedHabits(own) : [];
+	if (habits.length > 0) end.push(`Habits ${name} has been overusing: ${habits.join(', ')}. Leave all of them out this time.`);
 
 	end.push('', `Why it's ${name}'s turn: ${reason}`);
 	if (loopMode) end.push('Loop mode is on: the people want the characters to keep chatting on their own, so carry the conversation forward.');
@@ -158,7 +185,7 @@ function loreText(sections) {
 	return sections.map(section => `### ${section.heading}\n${section.text}`).join('\n\n');
 }
 
-async function writeLocally(modelData, members, { reason, loopMode }, model) {
+async function writeLocally(modelData, members, { reason, loopMode, question }, model) {
 	const name = modelData.displayname;
 	const { system, chat, episodes, layout, samples } = await localPrefix(members);
 	const tail = [`---\nPrivate note for ${name}. Nobody in the chat sees this.`];
@@ -176,18 +203,22 @@ async function writeLocally(modelData, members, { reason, loopMode }, model) {
 	}
 
 	if (!layout.castInPrefix) tail.push(`${name}'s character sheet:\n\n${sheetOf(modelData, samples)}`);
-	tail.push(await privateNote(modelData, members, { reason, loopMode, shownEpisodes: episodes, budget: layout.note }));
+	tail.push(await privateNote(modelData, members, { reason, loopMode, shownEpisodes: episodes, budget: layout.note, local: true }));
 	tail.push(localSpeakerFields);
 
-	const request = { label: name, model, system, prompt: `${chat}\n\n${tail.join('\n\n')}`, schema: localSpeakerSchema };
+	const mode = thinkingMode();
+	const think = mode === 'always' || (mode === 'questions' && question);
+	const request = { label: think ? `${name}, thinking` : name, model, system, prompt: `${chat}\n\n${tail.join('\n\n')}`, schema: localSpeakerSchema, think };
 	// Thinking too long leaves no room for the answer, so it answers once more without thinking
-	return (await askLocal(request)) ?? (localThinking() ? askLocal({ ...request, think: false }) : null);
+	return (await askLocal(request)) ?? (think ? askLocal({ ...request, label: name, think: false }) : null);
 }
 
-function splitIntoMessages(text) {
+// Smaller models write a burst as lines instead of using the marker, so locally every line is its own message
+function splitIntoMessages(text, local) {
 	const parts = text
 		.split(nextMessage)
-		.map(part => part.trim().replace(/\n\s*\n+/g, '\n'))
+		.flatMap(part => (local ? part.split('\n') : [part.replace(/\n\s*\n+/g, '\n')]))
+		.map(part => part.trim())
 		.filter(Boolean);
 	if (parts.length <= maxParts) return parts;
 	return [...parts.slice(0, maxParts - 1), parts.slice(maxParts - 1).join('\n')];
@@ -271,7 +302,7 @@ async function send(modelData, text, replyTo) {
 	return webhook.send({ content, allowedMentions: { parse: [] } });
 }
 
-export async function speak(member, members, { reason, loopMode }) {
+export async function speak(member, members, { reason, loopMode, question = false }) {
 	const { modelData } = member;
 	const name = modelData.displayname;
 	const character = idOf(modelData);
@@ -286,7 +317,7 @@ export async function speak(member, members, { reason, loopMode }) {
 	try {
 		let result;
 		if (current.local) {
-			result = await writeLocally(modelData, members, { reason, loopMode }, current.model);
+			result = await writeLocally(modelData, members, { reason, loopMode, question }, current.model);
 		} else {
 			const { content, episodes } = await transcriptContent();
 			const note = await privateNote(modelData, members, { reason, loopMode, shownEpisodes: episodes });
@@ -332,7 +363,7 @@ export async function speak(member, members, { reason, loopMode }) {
 			.filter(row => !current.local || (!row.is_bot && !row.character && row.id > newest.id - 15));
 
 		let typedFrom = typingFrom;
-		for (const [index, part] of splitIntoMessages(message).entries()) {
+		for (const [index, part] of splitIntoMessages(message, current.local).entries()) {
 			if (index > 0 && account) account.channel.sendTyping().catch(() => {});
 			const wait = typedFrom + typingTime(part) - Date.now();
 			if (wait > 0) await sleep(wait);

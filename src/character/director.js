@@ -74,15 +74,28 @@ function named(text, modelData) {
 		.some(name => new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(name)}([^\\p{L}\\p{N}]|$)`, 'iu').test(text));
 }
 
+const questionWord = /^(who|whos|what|whats|why|how|hows|when|where|wheres|which)(?![\p{L}\p{N}])/iu;
+const askingVerb = /^(do|does|did|is|are|was|were|can|could|would|will|should|have|has)\s+(you|u|ya|ur|your|we|they|he|she|it|i|anyone|someone|there|this|that)(?![\p{L}\p{N}])/iu;
+
+// A question mark, or a question once a greeting and the character's name are taken off the front
+export function asksQuestion(text, modelData) {
+	if (text.includes('?')) return true;
+	const names = [...new Set([modelData.displayname, modelData.idname])].map(escapeRegExp).join('|');
+	const rest = text.replace(new RegExp(`^[^\\p{L}\\p{N}]*((hey|yo|hi)\\s+)?(${names})(?![\\p{L}\\p{N}])[^\\p{L}\\p{N}]*`, 'iu'), '');
+	return questionWord.test(rest) || askingVerb.test(rest);
+}
+
 // A person replying to one character or naming only them is the obvious case, which smaller models still get wrong
 function addressed(members, last) {
 	if (last.character || last.is_bot) return null;
 
 	const replied = members.find(({ modelData }) => last.reply?.startsWith(`${modelData.displayname}:`));
-	if (replied) return { member: replied, reason: `${last.speaker} replied to them` };
-
 	const mentioned = members.filter(({ modelData }) => named(last.text, modelData));
-	return mentioned.length === 1 ? { member: mentioned[0], reason: `${last.speaker} talked to them by name` } : null;
+	const member = replied ?? (mentioned.length === 1 ? mentioned[0] : null);
+	if (!member) return null;
+
+	const reason = replied ? `${last.speaker} replied to them` : `${last.speaker} talked to them by name`;
+	return { member, reason, question: asksQuestion(last.text, member.modelData) };
 }
 
 export async function chooseSpeaker(members, { loopMode, chain }) {
