@@ -34,7 +34,7 @@ export async function describePictures(paths, context) {
 
 		const localModel = isClaudeModel(pictureModel) ? (current.local ? current.model : null) : pictureModel;
 		if (!localModel) return null;
-		const description = await askLocal({ label: 'pictures', model: localModel, system: pictureRules, prompt: context, images: paths });
+		const description = await askLocal({ label: 'pictures', model: localModel, system: pictureRules, prompt: context, images: paths, think: false });
 		return description?.trim() || null;
 	} catch (err) {
 		console.error(`${color.Red}Could not describe a picture: ${err.message}`);

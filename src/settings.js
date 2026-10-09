@@ -2,15 +2,15 @@ import { format } from "./utils/formatter.js";
 import fs from 'fs';
 
 const defaultSettings = {
-	temperature: 0.8,
+	temperature: 1,
 	num_predict: 512,
 	num_ctx: 2048,
 	// microstat: 1,
 	// microstat_eta: 0.1,
 	// microstat_tau: 5,
-	top_p: 0.9,
-	top_k: 40,
-	repeat_penalty: 1.1,
+	top_p: 0.95,
+	top_k: 64,
+	repeat_penalty: 1,
 	simultaneous_messages: false,
 	react_to_bots: false,
 }

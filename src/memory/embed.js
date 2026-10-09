@@ -55,12 +55,30 @@ export async function embed(texts, { query = false } = {}) {
 		return embeddings.map(normalize);
 	} catch (err) {
 		unavailableUntil = Date.now() + 60_000;
-		console.log(`${color.Red}Embedding model unavailable (${err.message}), memory search uses recent memories only`);
+		// Ollama says this when the model runs as a chat model, from a wrong EMBED_MODEL or an earlier ollama run
+		const fix = /does not support embeddings/i.test(err.message)
+			? `. EMBED_MODEL has to be an embedding model like qwen3-embedding:0.6b, then restart Ollama`
+			: '';
+		console.log(`${color.Red}Embedding model unavailable (${err.message})${fix}, memory search uses recent memories only`);
 		return null;
 	}
 }
 
+async function checkEmbedModel() {
+	const model = embedModel();
+	try {
+		const { capabilities } = await ollama.show({ model });
+		if (capabilities && !capabilities.includes('embedding')) {
+			console.log(`${color.Red}EMBED_MODEL ${model} is not an embedding model: set it to one like qwen3-embedding:0.6b, memory search stays off until then`);
+		}
+	} catch (err) {
+		console.log(`${color.Red}Embedding model ${model} is missing (${err.message}): ollama pull ${model}`);
+	}
+}
+
 export async function loadIndex() {
+	await checkEmbedModel();
+
 	// Vectors from different models can't be compared, so a new model means embedding everything again
 	if ((await getMeta('embed_model')) !== embedModel()) {
 		for (const table of Object.keys(index)) await run(`UPDATE ${table} SET embedding = NULL`);

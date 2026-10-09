@@ -1,15 +1,15 @@
 import { askClaude } from '../claude/request.js';
-import { askLocal } from '../ollama/local.js';
+import { askLocal, localThinking } from '../ollama/local.js';
 import { all } from '../memory/db.js';
 import { embed, search } from '../memory/embed.js';
 import { episodesByIds } from '../memory/episodes.js';
 import { addMemories, getState, memoriesByIds, recentMemories, setState } from '../memory/memories.js';
 import { addMessage, getWindowStart, lastMessageOf, messagesAfter, messagesByIds, recentMessages, recentMessagesOf } from '../memory/messages.js';
-import { relevantLore } from '../lore/chunks.js';
+import { characterLore, relevantLore } from '../lore/chunks.js';
 import { filterOutput } from '../utils/filter.js';
 import { color } from '../utils/consolecolors.js';
 import { localSpeakerFields, localSpeakerSchema, nextMessage, speakerSchema } from './prompts.js';
-import { localPrefix, sharedSystem, transcriptContent } from './context.js';
+import { localPrefix, sharedSystem, sheetOf, transcriptContent, voiceSamples } from './context.js';
 import { engine } from './engine.js';
 import { estimateTokens, formatClock, formatDay, formatShortDay, partOfDay, renderLine, timeAgo } from './transcript.js';
 import { getCharacterWebhook } from './webhooks.js';
@@ -154,27 +154,34 @@ async function privateNote(modelData, members, { reason, loopMode, shownEpisodes
 	return [...lines, ...recalled, ...end].join('\n');
 }
 
+function loreText(sections) {
+	return sections.map(section => `### ${section.heading}\n${section.text}`).join('\n\n');
+}
+
 async function writeLocally(modelData, members, { reason, loopMode }, model) {
 	const name = modelData.displayname;
-	const { system, chat, episodes, layout } = await localPrefix(members);
+	const { system, chat, episodes, layout, samples } = await localPrefix(members);
 	const tail = [`---\nPrivate note for ${name}. Nobody in the chat sees this.`];
+
+	const profile = await characterLore([name, modelData.idname], layout.profile);
+	if (profile.length > 0) tail.push(`Everything the lore says about ${name}, their own story:\n\n${loreText(profile)}`);
 
 	if (layout.lore > 0) {
 		// The newest message on its own and the conversation around it, both searched
 		const recent = await recentMessages(6);
 		const queries = [recent[recent.length - 1]?.text, recent.map(renderLine).join('\n')].filter(Boolean);
 		const vectors = queries.length > 0 ? (await embed(queries, { query: loreInstruction })) ?? [] : [];
-		const sections = await relevantLore(vectors, layout.lore);
-		if (sections.length > 0) {
-			tail.push(`Lore that may matter right now:\n\n${sections.map(section => `### ${section.heading}\n${section.text}`).join('\n\n')}`);
-		}
+		const sections = await relevantLore(vectors, layout.lore, new Set(profile.map(section => section.id)));
+		if (sections.length > 0) tail.push(`Other lore that may matter right now:\n\n${loreText(sections)}`);
 	}
 
-	if (!layout.castInPrefix) tail.push(`${name}'s character sheet:\n\n${modelData.model.trim()}`);
+	if (!layout.castInPrefix) tail.push(`${name}'s character sheet:\n\n${sheetOf(modelData, samples)}`);
 	tail.push(await privateNote(modelData, members, { reason, loopMode, shownEpisodes: episodes, budget: layout.note }));
 	tail.push(localSpeakerFields);
 
-	return askLocal({ label: name, model, system, prompt: `${chat}\n\n${tail.join('\n\n')}`, schema: localSpeakerSchema });
+	const request = { label: name, model, system, prompt: `${chat}\n\n${tail.join('\n\n')}`, schema: localSpeakerSchema };
+	// Thinking too long leaves no room for the answer, so it answers once more without thinking
+	return (await askLocal(request)) ?? (localThinking() ? askLocal({ ...request, think: false }) : null);
 }
 
 function splitIntoMessages(text) {
@@ -296,6 +303,7 @@ export async function speak(member, members, { reason, loopMode }) {
 			});
 		}
 		if (!result) return false;
+		if (result.plan) console.log(`${color.Gray}${name} plans: ${result.plan}`);
 
 		const decidedAt = Date.now();
 		if (result.mood) {
@@ -309,14 +317,19 @@ export async function speak(member, members, { reason, loopMode }) {
 		}
 
 		const written = cleanMessage(result.message ?? '', name);
-		const message = dropRepeats(written, await recentMessagesOf(character, 8)).trim();
+		const voice = current.local ? (await voiceSamples(character)).map(text => ({ text })) : [];
+		const message = dropRepeats(written, [...(await recentMessagesOf(character, 8)), ...voice]).trim();
 		if (message !== written) console.log(`${color.Gray}${name} repeated an earlier message, the repeated part wasn't sent: ${written}`);
 		if (!message) {
 			console.log(`${color.Gray}${name} stayed quiet`);
 			return false;
 		}
 
-		const [replyTo] = (result.reply_to > 0 ? await messagesByIds([result.reply_to]) : []).filter(row => row.character !== character);
+		// Smaller models sometimes pick an unrelated message number, so locally only a person's recent message counts
+		const [newest] = await recentMessages(1);
+		const [replyTo] = (result.reply_to > 0 ? await messagesByIds([result.reply_to]) : [])
+			.filter(row => row.character !== character)
+			.filter(row => !current.local || (!row.is_bot && !row.character && row.id > newest.id - 15));
 
 		let typedFrom = typingFrom;
 		for (const [index, part] of splitIntoMessages(message).entries()) {

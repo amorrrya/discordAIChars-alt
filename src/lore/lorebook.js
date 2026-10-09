@@ -16,7 +16,7 @@ export function lorebookKey() {
 }
 
 export function lorebookTexts() {
-	return loreFiles().map(file => fs.readFileSync(path.join(loreDirectory, file), 'utf8'));
+	return loreFiles().map(file => ({ file, text: fs.readFileSync(path.join(loreDirectory, file), 'utf8') }));
 }
 
 export function loadLorebook() {

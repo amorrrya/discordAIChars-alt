@@ -44,7 +44,7 @@ async function decideLocally(members, lines, names, loopMode, model) {
 		`Who sends the next message: ${choices}?${loopMode ? '' : ' Pick a character only when they have a real reason to write right now: they were talked to or asked something, or something just happened that they would react to. A reaction like "lol", "ok" or an emoji usually needs no answer. Otherwise nobody.'}`,
 		'Answer with JSON: "reason" (a few words on who or what they would respond to, nothing about what they know), "next" (the name).',
 	];
-	return askLocal({ label: 'director', model, system, prompt: `${chat}\n\n${note.join('\n')}`, schema: localDirectorSchema(names, !loopMode), temperature: 0.2 });
+	return askLocal({ label: 'director', model, system, prompt: `${chat}\n\n${note.join('\n')}`, schema: localDirectorSchema(names, !loopMode), temperature: 0.2, think: false });
 }
 
 async function decideWithClaude(members, lines, names, loopMode, model) {
@@ -65,9 +65,36 @@ async function decideWithClaude(members, lines, names, loopMode, model) {
 	});
 }
 
+function escapeRegExp(text) {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function named(text, modelData) {
+	return [...new Set([modelData.displayname, modelData.idname])]
+		.some(name => new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(name)}([^\\p{L}\\p{N}]|$)`, 'iu').test(text));
+}
+
+// A person replying to one character or naming only them is the obvious case, which smaller models still get wrong
+function addressed(members, last) {
+	if (last.character || last.is_bot) return null;
+
+	const replied = members.find(({ modelData }) => last.reply?.startsWith(`${modelData.displayname}:`));
+	if (replied) return { member: replied, reason: `${last.speaker} replied to them` };
+
+	const mentioned = members.filter(({ modelData }) => named(last.text, modelData));
+	return mentioned.length === 1 ? { member: mentioned[0], reason: `${last.speaker} talked to them by name` } : null;
+}
+
 export async function chooseSpeaker(members, { loopMode, chain }) {
 	const current = engine();
-	if (members.length === 0 || !current || !(await latestMessage())) return null;
+	const last = await latestMessage();
+	if (members.length === 0 || !current || !last) return null;
+
+	const direct = current.local ? addressed(members, last) : null;
+	if (direct) {
+		console.log(`${color.Gray}Director: ${direct.member.modelData.displayname} (${direct.reason})`);
+		return direct;
+	}
 
 	const lines = await situation(members, { loopMode, chain });
 	const names = members.map(({ modelData }) => modelData.displayname);

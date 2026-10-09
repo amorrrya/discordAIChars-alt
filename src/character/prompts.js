@@ -124,15 +124,16 @@ The chat is shown one message per line as "[HH:MM] #number Name: text". The #num
 - After a few character messages in a row with no person writing, lean towards nobody.
 - Someone asleep or busy is unlikely to answer unless they're pulled in.`;
 
-export const localSpeakerFields = `Answer with JSON: "thoughts" (what's privately on their mind, one or two sentences), "mood" (a few words), "doing" (what they're doing and where, one short sentence), "message" (exactly what they send, or "" to stay quiet), "reply_to" (the #number of an older message this answers, only once newer messages have pushed it up, otherwise 0), "remember" (new memories to keep, usually none: facts people shared, promises, important moments, each as {"text": a note to self, "about": [names]}).`;
+export const localSpeakerFields = `Answer with JSON: "thoughts" (what's privately on their mind, one or two sentences), "mood" (a few words), "doing" (what they're doing and where, one short sentence), "plan" (for you only, one or two short sentences: who they're answering and what was asked, what this character knows about it, and what they would really say and how), "message" (exactly what they send, or "" to stay quiet), "reply_to" (the #number of an older message this answers, only once newer messages have pushed it up, otherwise 0), "remember" (new memories to keep, usually none: facts people shared, promises, important moments, each as {"text": a note to self, "about": [names]}).`;
 
-// Thoughts come first, so a smaller model has thought about the moment before it writes
+// Thoughts and a short plan come first, so a smaller model has thought about the moment before it writes
 export const localSpeakerSchema = {
 	type: 'object',
 	properties: {
 		thoughts: { type: 'string' },
 		mood: { type: 'string' },
 		doing: { type: 'string' },
+		plan: { type: 'string', maxLength: 400 },
 		message: { type: 'string' },
 		reply_to: { type: 'integer' },
 		remember: {
@@ -147,7 +148,7 @@ export const localSpeakerSchema = {
 			},
 		},
 	},
-	required: ['thoughts', 'mood', 'doing', 'message', 'reply_to', 'remember'],
+	required: ['thoughts', 'mood', 'doing', 'plan', 'message', 'reply_to', 'remember'],
 };
 
 export function localDirectorSchema(names, allowNobody) {

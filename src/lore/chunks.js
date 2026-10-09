@@ -21,9 +21,10 @@ function splitLong(body) {
 	return pieces;
 }
 
-function chunkFile(text) {
+// The path starts with the file's own title, or its name when it has none
+function chunkFile(text, fileName) {
 	const chunks = [];
-	const headings = [];
+	const headings = [fileName.replace(/\.md$/, '')];
 	let lines = [];
 
 	const flush = () => {
@@ -39,7 +40,7 @@ function chunkFile(text) {
 		if (match) {
 			flush();
 			const level = match[1].length;
-			headings.length = level - 1;
+			headings.length = Math.max(level - 1, 1);
 			headings[level - 1] = match[2].trim();
 		} else {
 			lines.push(line);
@@ -57,8 +58,8 @@ export async function syncLoreChunks() {
 	forget('lore_chunks', old.map(row => row.id));
 	await run('DELETE FROM lore_chunks');
 
-	for (const text of lorebookTexts()) {
-		for (const { heading, text: body } of chunkFile(text)) {
+	for (const { file, text } of lorebookTexts()) {
+		for (const { heading, text: body } of chunkFile(text, file)) {
 			await run('INSERT INTO lore_chunks (heading, text) VALUES (?, ?)', [heading, body]);
 		}
 	}
@@ -78,25 +79,41 @@ function interleave(hitLists) {
 	return ids;
 }
 
-export async function relevantLore(queryVectors, tokenBudget) {
-	const vectors = queryVectors.filter(Boolean);
-	if (vectors.length === 0 || tokenBudget <= 0) return [];
-
-	const ids = interleave(vectors.map(vector => search('lore_chunks', vector, { k: 24 })));
-	if (ids.length === 0) return [];
-
-	const rows = await all(`SELECT id, heading, text FROM lore_chunks WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
-	const byId = new Map(rows.map(row => [row.id, row]));
-
+function fitBudget(rows, tokenBudget) {
 	const picked = [];
 	let used = 0;
-	for (const id of ids) {
-		const row = byId.get(id);
-		if (!row) continue;
+	for (const row of rows) {
 		const size = estimateTokens(row.text);
 		if (used + size > tokenBudget) continue;
 		picked.push(row);
 		used += size;
 	}
 	return picked;
+}
+
+function escapeRegExp(text) {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// A character's own profile: every lore section under a heading with their name, in lorebook order
+export async function characterLore(names, tokenBudget) {
+	if (tokenBudget <= 0) return [];
+
+	const patterns = [...new Set(names)].map(name => new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(name)}([^\\p{L}\\p{N}]|$)`, 'iu'));
+	const rows = await all('SELECT id, heading, text FROM lore_chunks ORDER BY id');
+	// The first heading is the file's title, which would pull in a whole file
+	const own = rows.filter(row => row.heading.split(' > ').slice(1).some(part => patterns.some(pattern => pattern.test(part))));
+	return fitBudget(own, tokenBudget);
+}
+
+export async function relevantLore(queryVectors, tokenBudget, exclude = new Set()) {
+	const vectors = queryVectors.filter(Boolean);
+	if (vectors.length === 0 || tokenBudget <= 0) return [];
+
+	const ids = interleave(vectors.map(vector => search('lore_chunks', vector, { k: 24, filter: id => !exclude.has(id) })));
+	if (ids.length === 0) return [];
+
+	const rows = await all(`SELECT id, heading, text FROM lore_chunks WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
+	const byId = new Map(rows.map(row => [row.id, row]));
+	return fitBudget(ids.map(id => byId.get(id)).filter(Boolean), tokenBudget);
 }

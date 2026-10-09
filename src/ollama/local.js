@@ -22,13 +22,14 @@ function parseJson(text) {
 	}
 }
 
-export async function askLocal({ label, model, system, prompt, schema = null, images = undefined, temperature = settings.temperature }) {
-	const thinking = localThinking();
+export const thinkingTokens = 8192;
+
+export async function askLocal({ label, model, system, prompt, schema = null, images = undefined, temperature = settings.temperature, think = localThinking() }) {
 	const response = await ollama.chat({
 		model,
 		stream: false,
 		keep_alive: '30m',
-		think: thinking,
+		think,
 		format: schema ?? undefined,
 		messages: [
 			{ role: 'system', content: system },
@@ -36,7 +37,7 @@ export async function askLocal({ label, model, system, prompt, schema = null, im
 		],
 		options: {
 			num_ctx: localContext(),
-			num_predict: thinking ? 6144 : 2048,
+			num_predict: think ? thinkingTokens : 2048,
 			temperature,
 			top_p: settings.top_p,
 			top_k: settings.top_k,

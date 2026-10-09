@@ -1,10 +1,10 @@
 import { channel } from '../channel.js';
-import { setMeta } from '../memory/db.js';
+import { all, setMeta } from '../memory/db.js';
 import { addEpisode, getSummarizedUntil, recentEpisodes } from '../memory/episodes.js';
 import { getWindowStart, latestMessage, messageBefore, messagesBetween, setWindowStart, windowMessages } from '../memory/messages.js';
 import { loadLorebook } from '../lore/lorebook.js';
 import { askClaude } from '../claude/request.js';
-import { askLocal, localContext, localThinking } from '../ollama/local.js';
+import { askLocal, localContext, localThinking, thinkingTokens } from '../ollama/local.js';
 import { color } from '../utils/consolecolors.js';
 import { engine } from './engine.js';
 import { coreRules, episodeRules, localRules } from './prompts.js';
@@ -17,6 +17,8 @@ const episodesInContext = 8;
 const messagesPerEpisode = 300;
 
 const directorBlocks = 5;
+
+const voiceSampleCount = 12;
 
 function historyBudget() {
 	return Number(process.env.HISTORY_TOKENS) || 80000;
@@ -87,46 +89,73 @@ export async function recentContent() {
 	return content;
 }
 
-function localCast(members, full) {
+function idOf(modelData) {
+	return modelData.idname.toLowerCase();
+}
+
+// Real past messages of a character: a smaller model copies a voice from examples far better than from a description.
+// Picked evenly from before the window, so they only change when the window moves.
+export async function voiceSamples(character) {
+	const rows = await all('SELECT text FROM messages WHERE character = ? AND id < ? AND length(text) <= 300 ORDER BY id', [character, await getWindowStart()]);
+	const count = Math.min(voiceSampleCount, rows.length);
+	return Array.from({ length: count }, (_, i) => rows[Math.floor(((i + 0.5) * rows.length) / count)].text.replace(/\s+/g, ' '));
+}
+
+async function castSamples(members) {
+	return new Map(await Promise.all(members.map(async ({ modelData }) => [idOf(modelData), await voiceSamples(idOf(modelData))])));
+}
+
+export function sheetOf(modelData, samples) {
+	const own = samples.get(idOf(modelData)) ?? [];
+	const voice = own.length > 0
+		? `\n\nHow ${modelData.displayname} writes, real messages of theirs for the voice only, never sent again:\n${own.map(text => `- ${text}`).join('\n')}`
+		: '';
+	return `${modelData.model.trim()}${voice}`;
+}
+
+function localCast(members, full, samples) {
 	return members
 		.map(({ modelData, note }) => {
 			const talks = note ? `How much they talk: ${note}` : '';
 			if (!full) return `- ${modelData.displayname}${note ? `. ${talks}` : ''}`;
-			return [`## ${modelData.displayname}`, talks, modelData.model.trim()].filter(Boolean).join('\n\n');
+			return [`## ${modelData.displayname}`, talks, sheetOf(modelData, samples)].filter(Boolean).join('\n\n');
 		})
 		.join(full ? '\n\n' : '\n');
 }
 
 // Fixed per cast and lorebook, so every request starts the same and the model can reuse what it already read
-export function localLayout(members) {
-	const usable = localContext() - (localThinking() ? 6144 : 2048) - 512;
+function localLayout(members, samples) {
+	const usable = localContext() - (localThinking() ? thinkingTokens : 2048) - 512;
 	const lore = loadLorebook();
 
 	const rules = estimateTokens(localRules);
-	const sheets = estimateTokens(localCast(members, true));
+	const sheets = estimateTokens(localCast(members, true, samples));
 	const castInPrefix = rules + sheets <= usable * 0.35;
-	const cast = castInPrefix ? sheets : estimateTokens(localCast(members, false));
+	const cast = castInPrefix ? sheets : estimateTokens(localCast(members, false, samples));
 	const loreInPrefix = Boolean(lore) && rules + cast + estimateTokens(lore) <= usable * 0.5;
 
-	const largestSheet = Math.max(0, ...members.map(({ modelData }) => estimateTokens(modelData.model)));
+	const largestSheet = Math.max(0, ...members.map(({ modelData }) => estimateTokens(sheetOf(modelData, samples))));
+	const searched = lore && !loreInPrefix;
 	const budgets = {
 		castInPrefix,
 		loreInPrefix,
 		sheet: castInPrefix ? 0 : largestSheet,
-		lore: lore && !loreInPrefix ? Math.round(usable * 0.2) : 0,
+		profile: searched ? Math.round(usable * 0.12) : 0,
+		lore: searched ? Math.round(usable * 0.15) : 0,
 		note: Math.round(usable * 0.1),
 		episodes: Math.round(usable * 0.1),
 	};
 
 	const start = rules + cast + (loreInPrefix ? estimateTokens(lore) : 0) + 200;
-	budgets.transcript = Math.max(usable - start - budgets.episodes - budgets.sheet - budgets.lore - budgets.note, 1000);
+	const tail = budgets.sheet + budgets.profile + budgets.lore + budgets.note;
+	budgets.transcript = Math.max(usable - start - budgets.episodes - tail, 1000);
 	return budgets;
 }
 
-function localSystem(members, layout) {
+function localSystem(members, layout, samples) {
 	const parts = [localRules];
 	if (layout.loreInPrefix) parts.push(`# Lore\n\n${loadLorebook()}`);
-	parts.push(`# The characters in this chat\n\n${localCast(members, layout.castInPrefix)}`);
+	parts.push(`# The characters in this chat\n\n${localCast(members, layout.castInPrefix, samples)}`);
 	return parts.join('\n\n');
 }
 
@@ -142,19 +171,20 @@ async function episodesWithin(budget) {
 }
 
 export async function localPrefix(members) {
-	const layout = localLayout(members);
+	const samples = await castSamples(members);
+	const layout = localLayout(members, samples);
 	const rows = await windowMessages();
 	const before = rows.length > 0 ? await messageBefore(rows[0].id) : null;
 	const episodes = await episodesWithin(layout.episodes);
 
 	const lines = renderLines(rows, before?.time ?? null);
 	const chat = `${chatInfo(episodes)}\n\n${lines.length > 0 ? lines.join('\n') : '(no messages yet)'}`;
-	return { system: localSystem(members, layout), chat, episodes, layout };
+	return { system: localSystem(members, layout, samples), chat, episodes, layout, samples };
 }
 
 export async function maintainWindow(members) {
 	const current = engine();
-	const budget = current?.local ? localLayout(members).transcript : historyBudget();
+	const budget = current?.local ? localLayout(members, await castSamples(members)).transcript : historyBudget();
 
 	const rows = await windowMessages();
 	const sizes = rows.map(row => estimateTokens(renderLine(row)));
@@ -184,7 +214,7 @@ async function summarize(current, rows, previous) {
 	const intro = previous ? `For continuity, the summary of the stretch before this one:\n\n${previous.summary}\n\n` : '';
 	const prompt = `${intro}The chat to summarize:\n\n${transcript}`;
 
-	if (current.local) return askLocal({ label: 'memory', model: current.model, system: episodeRules, prompt });
+	if (current.local) return askLocal({ label: 'memory', model: current.model, system: episodeRules, prompt, think: false });
 
 	return askClaude({
 		label: 'memory',

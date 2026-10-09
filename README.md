@@ -52,9 +52,9 @@ Measured on an RTX 4080 SUPER with a Ryzen 9 7900X, per reply once the chat is l
 - gemma4:12b-it-qat: 4 to 8 seconds
 - gemma4:e4b on the processor only: 15 to 30 seconds
 
-`LOCAL_THINK=true` lets the model think before every answer: smarter decisions and replies, about four times slower. `LOCAL_CONTEXT` sets how many tokens the model reads at once. More context remembers more of the chat and needs more memory.
+`LOCAL_THINK=true` lets the characters think before every reply: smarter replies, about four times slower. The director always decides without thinking. `LOCAL_CONTEXT` sets how many tokens the model reads at once. More context remembers more of the chat and needs more memory.
 
-Every request holds the rules and character sheets, then the chat, then a private note with the memories and lore sections that matter right now. Smaller models are less consistent and know less about the world. gemma4:e2b works, but its characters lose the thread quickly.
+Every reply sees the rules, the character sheets with real past messages of each character as voice examples, the chat, everything the lore says about the character who is speaking, and a private note with the memories and other lore that matter right now. The character writes a short plan before the message. Smaller models are less consistent and know less about the world. gemma4:e2b works, but its characters lose the thread quickly.
 
 ## Characters
 
@@ -71,6 +71,7 @@ Every request holds the rules and character sheets, then the chat, then a privat
 - What's on their mind gives them something going on right now, which keeps them from sounding generic.
 - How they talk needs concrete habits: lowercase or not, message length, words they use, emojis or none. End with "Never \*actions\* or narration, just your messages. Always stay Wren. Never say you're an AI or a bot."
 - World knowledge goes in the lorebook, not the sheet. Note secrets and who knows what.
+- Give every character a lore section with their name in the heading. Local models read all of it whenever that character speaks.
 - Keep sheets around 300 to 600 words, local models with a small context have less room for the chat.
 - The `!join` note decides how often they speak, e.g. "barely talks, answers direct questions with a few words".
 
