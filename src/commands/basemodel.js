@@ -1,4 +1,4 @@
-import { baseModel, imageRecognitionModel, getBaseModels, setBaseModel } from "../ollama/basemodel.js";
+import { baseModel, getBaseModels, setBaseModel } from "../ollama/basemodel.js";
 import { registerCommand } from "../registrar.js";
 
 /**
@@ -9,20 +9,19 @@ import { registerCommand } from "../registrar.js";
  * @example !basemodel
  */
 async function cmdBasemodel({ arg1: idName, authorId }) {
-	if (!idName) return `Active models:
-	Chat model: [${baseModel}](<https://ollama.com/library/${baseModel}>)
-	Image recognition model: [${imageRecognitionModel}](<https://ollama.com/library/${imageRecognitionModel}>)`
+	if (!idName) {
+		const { PICTURE_MODEL, EMBED_MODEL } = process.env;
+		return `characters: ${baseModel}\npictures: ${PICTURE_MODEL || baseModel}\nmemory search: ${EMBED_MODEL || 'qwen3-embedding:4b'}, local`;
+	}
 
 	const baseModels = await getBaseModels();
 
-	const baseModelLinks = baseModels.map(model => `[${model}](<https://ollama.com/library/${model}>)`);
+	if (idName === 'list') return `available models:\n${baseModels.join('\n')}`
 
-	if (idName === 'list') return `Available base models:\n${baseModelLinks.join('\n')}`
-
-	if (!baseModels.includes(idName)) return `Model with name "${idName}" not found`
+	if (!baseModels.includes(idName)) return `no model named "${idName}"`
 
 	setBaseModel(idName);
-	return `Base model has been set to: [${baseModel}](https://ollama.com/library/${baseModel})`
+	return `the characters run on ${baseModel} now`
 }
 
-registerCommand('basemodel', cmdBasemodel, 'Other', 'View or modify the current basemodel', '[model? | "list"?]');
+registerCommand('basemodel', cmdBasemodel, 'Settings', 'the models in use; list shows the others, a name switches to it', '[model|list]', '$!basemodel list');

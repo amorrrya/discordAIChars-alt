@@ -1,13 +1,18 @@
 import 'dotenv/config'
+import './utils/logfile.js';
 
 import { client } from './client.js';
 import { isIgnored } from './utils/ignore.js';
-import { talkToModel } from './ollama/chat.js';
+import { initCharacters, stopCharacters, talkToChannel } from './character/talk.js';
+import { closeMemory } from './memory/db.js';
+import { hasChannelCharacters } from './character/group.js';
+import { isOwnWebhook } from './character/webhooks.js';
+import { isCharacterAccount } from './character/accounts.js';
+import { settings } from './settings.js';
 import { channel } from './channel.js';
 import { hasPendingMessage, processPendingMessages } from './pending.js';
 import { getCallbackByCommand } from './registrar.js';
 import './commands/_all.js';
-import { defaultChannelModel } from './ollama/defaultmodel.js';
 import { formatMessage } from './utils/formatter.js';
 
 // Discord bot setup
@@ -62,27 +67,44 @@ async function checkForPendingMessages(message) {
 function isInvalidCommand(message) {
 	if (message.content.startsWith(PREFIX)) {
 		// Default response for invalid commands
-		const messageObject = formatMessage('Invalid command, use `!help` for a list of commands');
+		const name = message.content.split(/\s/)[0];
+		const messageObject = formatMessage(`no command named ${name}: ${PREFIX}help lists them`);
 		channel.send(messageObject);
 		return true;
 	}
 	return false;
 }
 
+// Pictures and stickers sent without text still count as messages
+function hasContent(message) {
+	return message.content.length > 0 || message.attachments.size > 0 || message.stickers.size > 0 || message.embeds.length > 0;
+}
+
 async function talkToDefaultModel(message) {
-	if (defaultChannelModel && !isIgnored(message.content)) {
-		talkToModel(message.content, message, defaultChannelModel);
+	if (hasChannelCharacters() && hasContent(message) && !(message.content && isIgnored(message.content))) {
+		talkToChannel(message);
 		return true;
 	}
 	return false;
 }
 
-client.on('messageCreate', async (message) => {
-	// Prevent bot from responding to itself
-	if (message.author.bot) return;
+// Other bots and webhooks only ever talk to the characters, never run commands
+async function isFromOtherBot(message) {
+	if (!settings.react_to_bots) return false;
+	if (message.author.id === client.user.id || isCharacterAccount(message.author.id)) return false;
+	if (message.webhookId && await isOwnWebhook(message.webhookId)) return false;
+	return true;
+}
 
+client.on('messageCreate', async (message) => {
 	// Prevent bot from responding to messages in other channels
 	if (message.channel !== channel) return;
+
+	// Prevent bot from responding to itself, and to other bots unless react_to_bots is on
+	if (message.author.bot) {
+		if (await isFromOtherBot(message)) await talkToDefaultModel(message);
+		return;
+	}
 
 	if (await checkForProcessableCommands(message)) return;
 
@@ -93,6 +115,31 @@ client.on('messageCreate', async (message) => {
 	if (await talkToDefaultModel(message)) return;
 });
 
+client.once('ready', async () => {
+	try {
+		await initCharacters();
+	} catch (err) {
+		console.error(`Could not set up character memory: ${err.message}`);
+	}
+});
+
 export function startBot() {
 	client.login(BOT_TOKEN);
+}
+
+let stopping = false;
+
+/**
+ * Finish the reply being written, then close everything cleanly
+ */
+export async function stopBot() {
+	if (stopping) return;
+	stopping = true;
+	console.log('Shutting down, letting the current reply finish');
+
+	await stopCharacters();
+	await client.destroy();
+	await closeMemory();
+	console.log('Stopped, everything is saved');
+	process.exit(0);
 }

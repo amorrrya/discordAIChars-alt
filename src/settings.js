@@ -12,6 +12,7 @@ const defaultSettings = {
 	top_k: 40,
 	repeat_penalty: 1.1,
 	simultaneous_messages: false,
+	react_to_bots: false,
 }
 
 const settingDataTypes = {
@@ -25,6 +26,7 @@ const settingDataTypes = {
 	top_k: 'int',
 	repeat_penalty: 'float',
 	simultaneous_messages: 'bool',
+	react_to_bots: 'bool',
 }
 
 const settingBounds = {
@@ -40,16 +42,17 @@ const settingBounds = {
 }
 
 const settingDescriptions = {
-	temperature: 'The temperature of the model. Higher = Creative',
-	num_predict: 'Maximum number of tokens to predict when generating text',
-	num_ctx: 'Sets the size of the context window used to generate the next token.',
+	temperature: 'local model: randomness, higher is more creative',
+	num_predict: '!chain only: longest reply, in tokens',
+	num_ctx: '!chain only: how much it reads, the group chat uses LOCAL_CONTEXT in .env',
 	// microstat: 'Enable Mirostat sampling for controlling perplexity',
 	// microstat_eta: 'Influences how quickly the algorithm responds to feedback from the generated text. Higher = More responsive to change',
 	// microstat_tau: 'Controls the balance between coherence and diversity of the output. Lower = Focused',
-	top_k: 'Reduces the probability of generating nonsense. Higher = Diverse, Lower = Conservative',
-	top_p: 'Works together with top-k. Higher = Diverse, Lower = Conservative',
-	repeat_penalty: 'Sets how strongly to penalize repetitions',
-	simultaneous_messages: 'Whether to allow multiple messages to be sent at once',
+	top_k: 'local model: how many word choices it weighs, higher is more varied',
+	top_p: 'local model: works with top_k, higher is more varied',
+	repeat_penalty: 'local model: how hard it avoids repeating itself',
+	simultaneous_messages: '!chain: allow several replies at once',
+	react_to_bots: 'the characters answer other bots and webhooks',
 }
 
 function copyDefaultSettings() {
@@ -73,33 +76,35 @@ export function updateSetting(key, inputString) {
 	const value = convertValue(inputString, dataType);
 	settings[key] = value;
 	fs.writeFileSync(settingsFilePath, JSON.stringify(settings, null, 2));
-	return `Updated ${key} to ${value}`;
+	return `${key} set to ${value}`;
 }
 
 function validateInput(key, inputString) {
 	const bounds = settingBounds[key];
 	const dataType = settingDataTypes[key];
 
-	if (!dataType) return `Invalid setting: ${key}`;
-	
+	if (!dataType) return `no setting named "${key}"`;
+
+	if (inputString === undefined || inputString === '') return `missing value: ${key} <value>`;
+
 	if (dataType === 'float' && isNaN(parseFloat(inputString))) {
-		return `Invalid value for ${key}. Must be a float`;
-	} 
-	
+		return `${key} takes a number`;
+	}
+
 	if (dataType === 'int' && isNaN(parseInt(inputString))) {
-		return `Invalid value for ${key}. Must be an integer`;
+		return `${key} takes a whole number`;
 	}
 
 	if (dataType === 'bool' && !['true', 'false'].includes(inputString.toLowerCase())) {
-		return `Invalid value for ${key}. Must be true or false`;
+		return `${key} takes true or false`;
 	}
 
 	if (bounds) {
 		const [min, max] = bounds;
 		const value = parseFloat(inputString);
 		if (value < min || value > max) {
-			return `Value for ${key} must be between ${min} and ${max}`;
-		} 
+			return `${key} goes from ${min} to ${max}`;
+		}
 	}
 
 	return null; // No error
@@ -123,19 +128,12 @@ export function resetSettings() {
 }
 
 export function displaySettings() {
-	let displayString = '$tSettings:\n\n';
+	let displayString = '$tsettings\n\n';
 	for (const key in settings) {
-		let boundsText = '';
-		if (settingBounds[key]) {
-			const [min, max] = settingBounds[key];
-			boundsText = `$x[${min}-${max}] `;
-		}
-		const dataType = `$b${settingDataTypes[key]} `;
-		const defaultValue = `$rDef: ${defaultSettings[key]} `;
-		const settingDescription = `$p${settingDescriptions[key]}\n`;
-		displayString += `${settingDescription}$y${key}$x: $w${settings[key]} ${boundsText}${defaultValue}${dataType}\n\n`;
+		const range = settingBounds[key] ? `, ${settingBounds[key][0]} to ${settingBounds[key][1]}` : '';
+		displayString += `$p${settingDescriptions[key]}\n$y${key}$x: $w${settings[key]} $x(default ${defaultSettings[key]}${range})\n\n`;
 	}
-	return format(displayString);
+	return format(displayString.trimEnd());
 }
 
 export function getParameters() {

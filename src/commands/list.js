@@ -1,6 +1,8 @@
 import { getAllModels } from "../db.js";
 import { registerCommand } from "../registrar.js";
 
+const { PREFIX } = process.env;
+
 /**
  * Show a list of all available models, separated by whether the user owns them or not.
  * @param {String} authorId - The Discord user ID
@@ -10,7 +12,7 @@ import { registerCommand } from "../registrar.js";
 async function cmdList({ authorId }) {
 	const modelDataArr = await getAllModels();
 
-	if (!modelDataArr.length) return 'No models found';
+	if (!modelDataArr.length) return `no characters yet: ${PREFIX}create makes one`;
 
 	const yourModels = [];
 	const otherModels = [];
@@ -23,7 +25,7 @@ async function cmdList({ authorId }) {
 		}
 	}
 
-	return `Your Models:\n${yourModels.join(', ')}\n### Other Models:\n${otherModels.join(', ')}`;
+	return `yours: ${yourModels.join(', ') || 'none'}\nothers: ${otherModels.join(', ') || 'none'}`;
 }
 
-registerCommand('list', cmdList, 'Browse', 'Show a list of all available models, separated by whether the user owns them or not');
+registerCommand('list', cmdList, 'Browse', 'all characters, yours first');

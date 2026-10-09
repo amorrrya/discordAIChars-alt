@@ -1,24 +1,26 @@
 export const commands = [];
 
+// Shown in this order by !help
 export const categoryNames = {
-	Other: 'Other commands',
-	Manage: 'Commands for managing models',
-	Browse: 'Commands for browsing models',
-	Interact: 'Commands for interacting with models',
-	Settings: 'Commands for changing global settings',
-	Debug: 'Commands for debugging',
+	Interact: 'chat',
+	Manage: 'characters',
+	Browse: 'browse',
+	Settings: 'settings',
+	Other: 'other',
+	Debug: 'debug',
 }
 
 /**
  * Register a command, used by every command on startup
- * @param {string} command 
+ * @param {string} command
  * @param {*} callback
- * @param {string} category 
- * @param {string} description 
- * @param {string} parameters
+ * @param {string} category
+ * @param {string} description
+ * @param {string} parameters - <needed> and [optional], like !help shows them
+ * @param {string} example - A full example, $! stands for the prefix
  */
-export function registerCommand(command, callback, category, description = '', parameters = '') {
-	commands.push({ command, callback, category, description, parameters });
+export function registerCommand(command, callback, category, description = '', parameters = '', example = '') {
+	commands.push({ command, callback, category, description, parameters, example });
 }
 
 /**

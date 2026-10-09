@@ -28,7 +28,7 @@ export function parseSystemMessage(model) {
 			messages.push(message);
 		} else {
 			const lastMessage = messages[messages.length - 1];
-			lastMessage.content += ' ' + content;
+			lastMessage.content += '\n' + content;
 		}
 	}
 

@@ -1,5 +1,18 @@
 import { registerCommand } from "../registrar.js";
 import { getApplicableModel } from "../db.js";
+import { client } from "../client.js";
+import { isMember } from "../character/group.js";
+import { memoryCount } from "../memory/memories.js";
+
+const { PREFIX } = process.env;
+
+async function userName(id) {
+	try {
+		return (await client.users.fetch(id)).username;
+	} catch {
+		return id;
+	}
+}
 
 /**
  * Show various information about a model.
@@ -8,17 +21,23 @@ import { getApplicableModel } from "../db.js";
  * @example !info Ben
  */
 async function cmdInfo({ arg1: idName }) {
-	if (!idName) return 'Please specify a model to show info'
+	if (!idName) return `missing name: ${PREFIX}info <name>`
 
 	const modelData = await getApplicableModel(idName);
-	
-	if (!modelData) return `Model with name "${idName}" not found`
-	
-	const { displayname, owner, model, profile } = modelData;
 
-	return [`Model info for "${displayname}":
-	- Owner: ${owner}
-	- Prompt: ${model}`, profile];
+	if (!modelData) return `no character named "${idName}"`
+
+	const { displayname, owner, model, profile, idname } = modelData;
+	const character = idname.toLowerCase();
+
+	const lines = [
+		displayname,
+		`owner: ${await userName(owner)}`,
+		`in the chat: ${isMember(character) ? 'yes' : 'no'}`,
+		`prompt: ${model.length} characters, ${PREFIX}prompt ${character} shows it`,
+		`memories: ${await memoryCount(character)}`,
+	];
+	return [lines.join('\n'), profile];
 }
 
-registerCommand('info', cmdInfo, 'Browse', 'Show various information about a model', '[name | "random"]');
+registerCommand('info', cmdInfo, 'Browse', 'a character\'s owner, avatar, prompt size and memories', '<name|random>', '$!info wren');

@@ -1,52 +1,74 @@
+import { channel } from "../channel.js";
 import { format } from "../utils/formatter.js";
 import { registerCommand, commands, categoryNames } from "../registrar.js";
 
-/**
- * Display help text.
- * @param {string} arg1: searchTerm - The search term
- * @returns {string} message - The response message
- * @example !help
- */
-function cmdHelp({ arg1: searchTerm }) {
-	const helpCategories = {};
+const { PREFIX } = process.env;
 
-	// Group commands together by category
-	commands.forEach(({ command, category, description, parameters }) => {
-		// Skip debug commands
-		if (category === 'Debug') return;
+// Discord takes 2000 characters per message
+const messageLimit = 1900;
 
-		// Skip commands that don't match the search term
-		if (searchTerm && !command.includes(searchTerm)) return;
-
-		if (!helpCategories[category]) {
-			helpCategories[category] = [];
-		}
-
-		helpCategories[category].push({ command, description, parameters });
-	});
-
-	// No commands found
-	if (Object.keys(helpCategories).length === 0) {
-		return 'No commands found';
-	}
-
-	let helpText = Object.entries(helpCategories).map(([category, commands]) => {
-		const allCommandsInCategory = commands.map(({ command, description, parameters }) => {
-			const formattedCommand = `$y$!${command}`;
-			const formattedParameters = parameters ? ` $g${parameters}` : '';
-			const formattedDescription = description ? `$x: $w${description}` : '';
-			// Ex: - !transfer [name] [user]: Transfer ownership of a model to another user
-			return `$w- ${formattedCommand}${formattedParameters}${formattedDescription}`;
-		}).join('\n');
-
-		return `$t${categoryNames[category]}:\n${allCommandsInCategory}\n`;
-	}).join('\n');
-	
-	if (!searchTerm) {
-		helpText += '\n$pMessages starting with # or _ will be ignored by the AI. It will also ignore any messages while a message is being generated.';
-	}
-
-	return format(helpText);
+function usage({ command, parameters }) {
+	return `$y$!${command}${parameters ? ` $g${parameters}` : ''}`;
 }
 
-registerCommand('help', cmdHelp, 'Other', 'Display help text');
+function line(entry) {
+	return `${usage(entry)}${entry.description ? `$x: $w${entry.description}` : ''}`;
+}
+
+function details(entry) {
+	const lines = [usage(entry), `$w${entry.description}`];
+	if (entry.example) lines.push(`$xe.g. $w${entry.example}`);
+	return format(lines.join('\n'));
+}
+
+// Categories are packed into as few messages as fit
+function pack(blocks) {
+	const messages = [];
+	let current = '';
+	for (const block of blocks) {
+		const joined = current ? `${current}\n\n${block}` : block;
+		if (current && format(joined).length > messageLimit) {
+			messages.push(current);
+			current = block;
+		} else {
+			current = joined;
+		}
+	}
+	if (current) messages.push(current);
+	return messages.map(format);
+}
+
+/**
+ * List all commands, or show one command's usage
+ * @param {string} arg1: term - A command name or part of one
+ * @returns {string} - The last help message, the ones before it are sent directly
+ * @example !help
+ * @example !help join
+ */
+async function cmdHelp({ arg1: term }) {
+	const visible = commands.filter(({ category }) => category !== 'Debug');
+
+	if (term) {
+		const name = term.toLowerCase().replace(PREFIX, '');
+		const exact = visible.find(entry => entry.command === name);
+		if (exact) return details(exact);
+
+		const matches = visible.filter(entry => entry.command.includes(name));
+		if (matches.length === 0) return `no command matches "${term}"`;
+		return format(matches.map(line).join('\n'));
+	}
+
+	const blocks = Object.keys(categoryNames)
+		.map(category => {
+			const entries = visible.filter(entry => entry.category === category);
+			return entries.length > 0 ? `$t${categoryNames[category]}\n${entries.map(line).join('\n')}` : null;
+		})
+		.filter(Boolean);
+	blocks.push('$pthe characters skip messages that start with # or _\n$x$!help <command> shows its usage and an example');
+
+	const messages = pack(blocks);
+	for (const message of messages.slice(0, -1)) await channel.send(message);
+	return messages[messages.length - 1];
+}
+
+registerCommand('help', cmdHelp, 'Other', 'all commands, or the usage of one', '[command]', '$!help join');

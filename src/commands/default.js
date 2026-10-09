@@ -2,6 +2,8 @@ import { registerCommand } from "../registrar.js";
 import { getApplicableModel } from "../db.js";
 import { resetDefaultChannelModel, setDefaultChannelModel } from "../ollama/defaultmodel.js";
 
+const { PREFIX } = process.env;
+
 /**
  * Set a model as the default model for the channel, or clear the default model.
  * @param {string} arg1: idName - The name of the model or "random"
@@ -12,17 +14,17 @@ import { resetDefaultChannelModel, setDefaultChannelModel } from "../ollama/defa
 async function cmdDefault({ arg1: idName }) {
 	if (idName === '') {
 		resetDefaultChannelModel();
-		return 'Default model cleared'
+		return 'default character cleared'
 	}
 
 	const modelData = await getApplicableModel(idName)
 
-	if (!modelData) return `Model with name "${idName}" not found`
+	if (!modelData) return `no character named "${idName}"`
 
 	const { displayname } = modelData;
 
 	setDefaultChannelModel(idName);
-	return `Default model set to "${displayname}"\nThis means you can talk to this model without running the !ask command.`
+	return `default character: ${displayname}, used while nobody joined with ${PREFIX}join`
 }
 
-registerCommand('default', cmdDefault, 'Interact', 'Set a model as the default model for the channel, or clear the default model', '[name?]');
+registerCommand('default', cmdDefault, 'Interact', 'the character that answers while nobody joined; empty clears it', '[name]', '$!default wren');

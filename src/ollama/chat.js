@@ -11,6 +11,7 @@ import { baseModel, imageRecognitionModel } from './basemodel.js';
 import { parseSystemMessage } from './systemmessage.js';
 import { WPMCounter } from '../utils/wpmcounter.js';
 import { saveImage } from '../utils/imagesave.js';
+import { isClaudeModel, streamClaude, trimHistory } from '../claude/chat.js';
 
 let isGenerating = false;
 let lastResponse = 'Introduce yourself';
@@ -30,14 +31,6 @@ async function generateIntoWebhookMessage(messages, webhookMessageId, hasImage =
 	let generatedSuccessfully = false;
 
 	try {
-		// Initiate the chat with the model
-		const response = await ollama.chat({ 
-			model, 
-			messages,
-			stream: true,
-			options: getParameters()
-		});
-	
 		// Update the webhook message with the model's responses at a set interval
 		let lastMessageInWebhook = '';
 		updateInterval = setInterval(() => {
@@ -53,18 +46,37 @@ async function generateIntoWebhookMessage(messages, webhookMessageId, hasImage =
 				content: filterOutput(generatedResult) + messageCursor,
 			});
 		}, messageUpdateInterval);
-	
-		// Continously update the result as new tokens get generated
-		for await (const part of response) {
-			if (!part.message?.content) continue;
-	
-			generatedResult += part.message.content;
-	
-			process.stdout.write(part.message.content);
-		}
 
-		generatedSuccessfully = true;
-	} catch (err) {}
+		if (isClaudeModel(model)) {
+			const result = await streamClaude(model, messages, (text, delta) => {
+				generatedResult = text;
+				process.stdout.write(delta);
+			});
+			generatedSuccessfully = result !== null;
+		} else {
+			// Initiate the chat with the model
+			const response = await ollama.chat({
+				model,
+				think: false,
+				messages,
+				stream: true,
+				options: getParameters()
+			});
+
+			// Continously update the result as new tokens get generated
+			for await (const part of response) {
+				if (!part.message?.content) continue;
+
+				generatedResult += part.message.content;
+
+				process.stdout.write(part.message.content);
+			}
+
+			generatedSuccessfully = true;
+		}
+	} catch (err) {
+		console.error(`\n${color.Red}Error: ${err.message}`);
+	}
 
 	// Generation has finished, clear the interval
 	clearInterval(updateInterval);
@@ -76,13 +88,16 @@ async function generateIntoWebhookMessage(messages, webhookMessageId, hasImage =
 	return generatedSuccessfully ? generatedResult : null;
 }
 
-async function formMessageHistory(userInput, systemPrompt, modelName, imagePath = null) {
+async function formMessageHistory(userInput, systemPrompt, modelName, model, imagePath = null) {
 	const messages = [];
 
 	// System message
 	messages.push(... parseSystemMessage(systemPrompt))
 
-	if (!imagePath) {
+	if (isClaudeModel(model)) {
+		// Claude keeps the conversation even when an image is sent
+		messages.push(... trimHistory(getAllMessagesFrom(modelName)));
+	} else if (!imagePath) {
 		// Previous messages the AI & user have sent
 		messages.push(... getAllMessagesFrom(modelName));
 	}
@@ -120,7 +135,7 @@ export async function talkToModel(userInput, message, modelName = defaultChannel
 
 	// Check if model exists
 	if (!modelData) {
-		await channel.send(`### Model with name "${modelName}" not found`);
+		await channel.send(`### no character named "${modelName}"`);
 		return;
 	}
 
@@ -155,7 +170,7 @@ export async function talkToModel(userInput, message, modelName = defaultChannel
 		const { hasImage, imagePath } = await getImageFromMessage(message);
 
 		// Get the message list to send to the model
-		const messages = await formMessageHistory(userInput, model, lowerIdName, imagePath);
+		const messages = await formMessageHistory(userInput, model, lowerIdName, hasImage ? imageRecognitionModel : baseModel, imagePath);
 
 		// Initiate the chat with the model
 		const generatedResult = await generateIntoWebhookMessage(messages, webhookMessageId, hasImage);

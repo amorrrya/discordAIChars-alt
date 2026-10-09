@@ -1,40 +1,53 @@
 import { registerCommand } from "../registrar.js";
 import { getModel } from "../db.js";
+import { isAdmin } from "../permissions.js";
 import { clearAllMessages, clearLastMessagesFrom, clearMessagesFrom } from "../ollama/previousmessages.js";
+import { clearChatMemory, deleteLastMessages } from "../memory/messages.js";
+import { isMember } from "../character/group.js";
+
+const { PREFIX } = process.env;
 
 /**
- * Clear chat history for a model
- * @param {string} arg1: idName - The name of the model or "all"
- * @param {string} arg2: amount - The number of messages to clear
+ * Remove recent messages from the characters' memory, or wipe it
+ * @param {string} arg1: amount, "all", or the name of a model outside the channel chat
+ * @param {string} arg2: amount - For models outside the channel chat
+ * @param {string} authorId - The Discord ID of the author
  * @returns {string} - The response message
- * @example !clear Ben
- * @example !clear Ben 5
+ * @example !clear 3
+ * @example !clear all
  */
-async function cmdClear({ arg1: idName, arg2: amount }) {
-	if (idName === 'all') {
+async function cmdClear({ arg1, arg2: amount, authorId }) {
+	if (!arg1) return `missing number: ${PREFIX}clear <number> forgets the last messages, ${PREFIX}clear all forgets everything`;
+
+	if (arg1 === 'all') {
+		if (!isAdmin(authorId)) return 'only the admin can wipe the memory';
+		await clearChatMemory();
 		clearAllMessages();
-		return 'Chat history for all models cleared';
+		return 'the characters forgot everything';
 	}
 
-	if (idName === '') return 'Please specify a model to clear';
+	const count = parseInt(arg1);
+	if (!isNaN(count)) {
+		const removed = await deleteLastMessages(count);
+		return `the characters forgot the last ${removed} message${removed === 1 ? '' : 's'}`;
+	}
 
-	const modelData = await getModel(idName);
+	if (isMember(arg1)) return `the characters share one memory: ${PREFIX}clear <number|all>`;
 
-	if (!modelData) return `Model with name "${idName}" not found`
+	// Models outside the channel chat still keep their own history
+	const modelData = await getModel(arg1);
+	if (!modelData) return `no character named "${arg1}"`;
 
-	const lowerIdName = idName.toLowerCase();
-
+	const lowerIdName = arg1.toLowerCase();
 	if (!amount) {
 		clearMessagesFrom(lowerIdName);
-		return `Chat history for model "${idName}" cleared`
+		return `history of ${modelData.displayname} cleared`;
 	}
 
 	const num = parseInt(amount);
-	if (isNaN(num)) return 'Please specify a valid number of messages to clear'
-
+	if (isNaN(num)) return `not a number: ${amount}`;
 	clearLastMessagesFrom(lowerIdName, num);
-
-	return `Last ${num} messages cleared for model "${idName}"`;
+	return `last ${num} messages of ${modelData.displayname} cleared`;
 }
 
-registerCommand('clear', cmdClear, 'Interact', 'Clear chat history for a model', '[name | "all"] [amount?]');
+registerCommand('clear', cmdClear, 'Interact', 'the characters forget the last messages; all wipes everything, admin only', '<number|all>', '$!clear 3');

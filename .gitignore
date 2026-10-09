@@ -1,6 +1,11 @@
 .env
 node_modules
 *.db
+*.db-shm
+*.db-wal
 *.json
 avatars/
 images/
+/lore/
+/backup/
+bot.log*

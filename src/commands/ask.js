@@ -1,5 +1,7 @@
 import { registerCommand } from "../registrar.js";
-import { talkToModel } from "../ollama/chat.js";
+import { talkAsCharacter } from "../character/talk.js";
+
+const { PREFIX } = process.env;
 
 /**
  * Ask the model a question directly.
@@ -8,14 +10,14 @@ import { talkToModel } from "../ollama/chat.js";
  * @param {Message} message - The Discord message
  * @returns {string} - The response to the command.
  * @example !ask Ben How are you?
- * 
+ *
  */
 function cmdAsk({ arg1: idName, messageAfterArg1: promptString, message }) {
-	if (!idName) return 'Please provide a name for the model.';
+	if (!idName) return `missing name: ${PREFIX}ask <name> <message>`;
 
-	if (!promptString) return 'Please provide a prompt for the model to answer.';
+	if (!promptString) return `missing message: ${PREFIX}ask <name> <message>`;
 
-	talkToModel(promptString, message, idName);
+	talkAsCharacter(promptString, message, idName);
 }
 
-registerCommand('ask', cmdAsk, 'Interact', 'Ask the model a question directly', '[name | "random"] [prompt | "last"]');
+registerCommand('ask', cmdAsk, 'Interact', 'a character answers this message first', '<name|random> <message>', '$!ask wren are you okay');
